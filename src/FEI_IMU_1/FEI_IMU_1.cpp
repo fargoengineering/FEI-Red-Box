@@ -42,7 +42,6 @@ int input_vals[3];
 // Non-Constant values
 int accel_thresh = 2;                
 int battery = 100;
-unsigned long time_thresh = 0;
 bool rateIsHigh = false;
 bool movement = false;
 int movement_char = 0;
@@ -140,8 +139,6 @@ void parseString(String inputString) {
 }
 
 
-
-
 class CharacteristicCallback : public BLECharacteristicCallbacks
 {
     void onWrite(BLECharacteristic *pCharacteristic)
@@ -151,15 +148,6 @@ class CharacteristicCallback : public BLECharacteristicCallbacks
         Serial.printf("\nReceived Data from BLE: %s", value.c_str());
         Serial.printf("\nCharacteristic: %s", UID.c_str());
 
-        // Old Protocol
-        // parseStringToIntArray(value.c_str());
-        // Serial.printf("Trigger: %d\n",input_vals[0]);
-        // Serial.printf("d/s thresh: %d\n",input_vals[1]);
-        // Serial.printf("ms thresh: %d\n",input_vals[2]);
-        // trigger_in = input_vals[0];
-        // accel_thresh = input_vals[1];
-        // time_thresh = input_vals[2];
-
         // February 13, 2024:
         String valueStr;
         for(char c : value){
@@ -168,13 +156,12 @@ class CharacteristicCallback : public BLECharacteristicCallbacks
         parseString(valueStr);
 
         Serial.printf("Start bit: %d\n",start_bit);
-        Serial.printf("Movement Target: %f\n",movement_low_end);
-        Serial.printf("Movement thresh: %f\n",movement_high_end);
-        Serial.printf("ms_target : %d",ms_target);
+        Serial.printf("Movement Low end: %f\n",movement_low_end);
+        Serial.printf("Movement High End: %f\n",movement_high_end);
+        Serial.printf("ms_target : %d\n",ms_target);
         Serial.printf("axis_key: %d\n",axis_key);
 
         trigger_in = start_bit;
-        time_thresh = ms_target;
 
         // Reset loop
         is_triggered = false;
@@ -187,14 +174,16 @@ void setBLE()
     // To save values in string
     char analog1Str[10] = "";
     char analog2Str[10] = "";
+    char analog3Str[10] = "";
 
     // Converting to strings
     dtostrf(static_cast<float>(movement_char),1,2,analog1Str);
     dtostrf(int(movement),1,2,analog2Str);
+    dtostrf(lipo.getSOC(),1,2,analog3Str);
 
     // Combining to single string
-    snprintf(notify_char, sizeof(notify_char), "<%s,%s,0>", analog1Str, analog2Str);   // show flag and battery status
-    // snprintf(notify_char, sizeof(notify_char), "<%s>", analog1Str);                     // Only show flag
+    snprintf(notify_char, sizeof(notify_char), "<%s,%s,%s>", analog1Str, analog2Str, analog3Str);   // show flag and battery status
+    // snprintf(notify_char, sizeof(notify_char), "<%s>", analog1Str);                              // Only show flag
 
     // Notify string
     characteristics[0]->setValue(notify_char);
@@ -318,10 +307,8 @@ void setup()
         lipo.enableDebugging();
         Serial.println("Unable to read battery.");
     }else{
-        Serial.print(F("Battery empty threshold is currently: "));
-        battery = lipo.getThreshold();
-        Serial.print(lipo.getThreshold());
-        Serial.println(F("%"));
+        Serial.print("Battery Charge is at: %");
+        Serial.println(lipo.getSOC());
     }
 
     pinMode(EN_3V3_SW, OUTPUT);
@@ -393,6 +380,7 @@ void loop()
         // check if movement is continuous for specified amount of time
         if(axis_key == 0)   // measure pitch - x axis
         {
+        //    Serial.println(abs(gyro.gyro.x));
            if((movement_high_end)>(abs(gyro.gyro.x))>(movement_low_end)){
                 if(startTime == 0){
                     startTime = millis();
@@ -414,6 +402,7 @@ void loop()
             }
         }
         else if (axis_key == 1){ // measure YAW - z axis
+            // Serial.println(abs(gyro.gyro.z));
             if((movement_high_end)>(abs(gyro.gyro.z))>(movement_low_end)){
                 if(startTime == 0){
                     startTime = millis();
