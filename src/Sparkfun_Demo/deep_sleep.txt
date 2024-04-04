@@ -1,0 +1,212 @@
+#include "esp_sleep.h"
+#include <SPI.h>
+#include <Wire.h>
+#include "SparkFun_ISM330DHCX.h" //Click here to get the library: http://librarymanager/All#SparkFun_6DoF_ISM330DHCX
+#include <SparkFun_MMC5983MA_Arduino_Library.h> //Click here to get the library: http://librarymanager/All#SparkFun_MMC5983MA
+#define STAT_LED 25 // DataLogger IoT – 9DoF STAT LED is connected to D25
+#define IMU_CS 5
+#define MAG_CS 27
+
+RTC_DATA_ATTR int bootCount = 0;
+
+SparkFun_ISM330DHCX_SPI myISM; // SPI instance class call
+SFE_MMC5983MA myMag;
+
+const unsigned long interval = 15000;
+unsigned long previousMillis = 0;
+sfe_ism_data_t accelData;
+
+
+void setup()
+{
+  Serial.begin(115200);
+  delay(1000);
+  pinMode(STAT_LED, OUTPUT); digitalWrite(STAT_LED, HIGH); // Turn the STAT LED on
+
+  // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+  pinMode(5,OUTPUT);
+  digitalWrite(5,HIGH);
+  pinMode(34,INPUT);
+
+  Wire.setPins(23,18);
+  Wire.begin();
+
+  if(!myISM.begin(5)){
+    Serial.println("IMU SETUP ERROR");
+    while(1);
+  }
+  Serial.println("IMU GOOD");
+  myISM.deviceReset();
+
+  while(!myISM.getDeviceReset()){
+    delay(1);
+  }
+
+  
+  byte data_to_write[1] = {0x30};
+  if (!myISM.writeRegisterRegion(0x0A, data_to_write, 1)) {
+    Serial.println("Failed to write to register!");
+  } else {
+    Serial.println("Successfully wrote to register!");
+  }
+
+  
+
+  myISM.setDeviceConfig();
+	myISM.setBlockDataUpdate();
+	
+	// Set the output data rate and precision of the accelerometer
+	myISM.setAccelDataRate(ISM_XL_ODR_104Hz);
+	myISM.setAccelFullScale(ISM_4g); 
+
+	// Turn on the accelerometer's filter and apply settings. 
+	myISM.setAccelFilterLP2();
+	myISM.setAccelSlopeFilter(ISM_LP_ODR_DIV_100);
+
+	// Set the accelerometer's status i.e. the data ready to interrupt one. 
+	myISM.setAccelStatustoInt1();
+
+  Serial.println("ISM READY?");
+
+  // Disable the IMU accelerometers and gyros
+  // pinMode(IMU_CS, OUTPUT); digitalWrite(IMU_CS, HIGH);
+  // pinMode(MAG_CS, OUTPUT); digitalWrite(MAG_CS, HIGH);
+
+  SPI.begin();
+
+  delay(100);
+
+  while( !myISM.begin(IMU_CS) )
+  {
+    //while(1)
+    {
+      digitalWrite(STAT_LED, HIGH); // Blink the STAT LED
+      delay(200);
+      digitalWrite(STAT_LED, LOW); // Blink the STAT LED
+      delay(1800);
+    }
+  }
+
+  // Reset the device to default settings
+  // This if helpful is you're doing multiple uploads testing different settings. 
+  // myISM.deviceReset();
+
+  // // Wait for it to finish reseting
+  // while( !myISM.getDeviceReset() )
+  // { 
+  //   {
+  //     digitalWrite(STAT_LED, HIGH); // Blink the STAT LED
+  //     delay(200);
+  //     digitalWrite(STAT_LED, LOW); // Blink the STAT LED
+  //     delay(200);
+  //     digitalWrite(STAT_LED, HIGH); // Blink the STAT LED
+  //     delay(200);
+  //     digitalWrite(STAT_LED, LOW); // Blink the STAT LED
+  //     delay(1400);
+  //   }
+  // } 
+
+  // delay(100);
+
+  // myISM.setAccelDataRate(ISM_XL_ODR_OFF); // Disable the accelerometers
+  // myISM.setAccelDataRate(ISM_GY_ODR_OFF); // Disable the gyros
+
+  delay(100);
+
+  // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+  // Disable the magnetometer
+
+  // SPISettings mySettings = SPISettings(3000000, MSBFIRST, SPI_MODE0);
+  // while ( !myMag.begin(MAG_CS, mySettings, SPI) ) // .begin sets up the CS pin as an OUTPUT
+  // {
+  //   //while (1)
+  //   {
+  //     digitalWrite(STAT_LED, HIGH); // Blink the STAT LED
+  //     delay(200);
+  //     digitalWrite(STAT_LED, LOW); // Blink the STAT LED
+  //     delay(200);
+  //     digitalWrite(STAT_LED, HIGH); // Blink the STAT LED
+  //     delay(200);
+  //     digitalWrite(STAT_LED, LOW); // Blink the STAT LED
+  //     delay(200);
+  //     digitalWrite(STAT_LED, HIGH); // Blink the STAT LED
+  //     delay(200);
+  //     digitalWrite(STAT_LED, LOW); // Blink the STAT LED
+  //     delay(1000);
+  //   }
+  // }
+
+  // myMag.softReset();
+
+  // delay(100);
+
+  // myMag.disableContinuousMode();
+  
+  // delay(100);
+
+  // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+  // Configure Sleep PowerDown
+
+  SPI.end();
+
+  esp_sleep_config_gpio_isolate();
+
+  // esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
+  // esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_OFF);
+  // esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_OFF);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_XTAL, ESP_PD_OPTION_OFF);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC8M, ESP_PD_OPTION_OFF);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_OFF);
+
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+
+  // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+  // Deep Sleep
+
+  //digitalWrite(STAT_LED, LOW); // Turn the STAT LED off. Redundant since the pin is isolated during sleep.
+
+  // esp_sleep_enable_timer_wakeup(5000000ULL); // Sleep for 5 seconds - this will undo some of the pd_config settings
+
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_34,1);
+
+  delay(500);
+  bootCount++;
+
+  // esp_deep_sleep_start();
+}
+
+void loop()
+{ 
+  digitalWrite(STAT_LED,HIGH);
+  delay(500);
+  digitalWrite(STAT_LED,LOW);
+  delay(500);
+  
+  unsigned long currentMillis = millis();
+
+	if( digitalRead(34) == HIGH ){
+		myISM.getAccel(&accelData);
+		Serial.print("Accelerometer: ");
+		Serial.print("X: ");
+		Serial.print(accelData.xData);
+		Serial.print(" ");
+		Serial.print("Y: ");
+		Serial.print(accelData.yData);
+		Serial.print(" ");
+		Serial.print("Z: ");
+		Serial.print(accelData.zData);
+		Serial.println(" ");
+	}
+
+  if(currentMillis - previousMillis >= interval){
+    previousMillis = currentMillis;
+
+    pinMode(GPIO_NUM_34,INPUT_PULLDOWN);
+    Serial.println("Going to sleep");
+    delay(100);
+    esp_deep_sleep_start();
+  }
+}

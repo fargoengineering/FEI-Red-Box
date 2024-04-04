@@ -1,26 +1,30 @@
-#include <Arduino.h>
+#include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h>
+#include <Adafruit_BusIO_Register.h>
+#include <Adafruit_ISM330DHCX.h>
+#include <Adafruit_Sensor.h>
+#include <RunningAverage.h>
+#include <TimedBlink.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
+#include "esp_sleep.h"
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <Wire.h>
 #include <Arduino.h>
-#include <string>
-#include <SPI.h>
-#include <Wire.h>
-#include "esp_sleep.h"
-#include <Adafruit_ISM330DHCX.h>
-#include <WiFi.h>
 #include <FastLED.h>
-#include <TimedBlink.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BusIO_Register.h>
-#include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h>
+#include <Wire.h>
+#include <string>
+#include <WiFi.h>
+#include <Wire.h>
+#include <SPI.h>
+
 #define EN_3V3_SW 32 // The 3.3V_SW regulator Enable pin is connected to D32
 #define RGB_LED 26   // OpenLog ESP32 RGB LED is connected to D26
 #define MAG_CS 27
 #define CHARGE_PIN 33
 
+
+RunningAverage avg_x(100);
+RunningAverage avg_z(100);
 TimedBlink statusled(26);
 Adafruit_ISM330DHCX ISM;
 SFE_MAX1704X lipo(MAX1704X_MAX17048); // Create a MAX17048
@@ -31,7 +35,7 @@ sensors_event_t gyro;
 sensors_event_t temp;
 
 // Constant values
-const char VERSION[] = "2024.02.15"; // This version: Jan 2024 - Dylan
+const char VERSION[] = "2024.02.23"; // This version: FEB 2024 - Dylan
 const char BLE_Name[] = "FEI_IMU_BOX_01";
 const int NUM_SERVICES = 2;
 const int NUM_CHAR_PER_SERVICE = 1;
@@ -40,12 +44,14 @@ const long interval = 500; // interval to update BLE
 int input_vals[3];
 
 // Non-Constant values
-int accel_thresh = 2;                
+float gyro_x = 0.0;
+float gyro_z = 0.0;
+int accel_thresh = 2;
 int battery = 100;
 bool rateIsHigh = false;
 bool movement = false;
 int movement_char = 0;
-unsigned long checkDurationMillis = 2000;   // time that degree/s should be active before triggering
+unsigned long checkDurationMillis = 2000; // time that degree/s should be active before triggering
 unsigned long previousMillis = 0;
 int trigger_in = 0;
 char notify_char[100];
@@ -60,84 +66,91 @@ static int switchCaseValue = 0;
 float min_x, max_x, mid_x;
 float min_y, max_y, mid_y;
 float min_z, max_z, mid_z;
+bool charging = 0;
 
 // BLE Variables
 int start_bit = 0;
 float movement_low_end = 0;
 float movement_high_end = 0;
-int ms_target = 0;
+unsigned long ms_target = 0;
 int axis_key = 0;
 
 BLEServer *pServer;
 BLEService *pServices[NUM_SERVICES];
 BLECharacteristic *characteristics[NUM_CHARS];
 const char *const service_ids[NUM_SERVICES] =
-    {
+{
         "00000000-0000-0000-0000-000000000001",
         "00000000-0000-0000-0000-000000000002",
 };
+
 const char *characteristic_ids[NUM_CHARS] =
-    {
+{
         "00000000-0000-0000-0000-000000000001", // Read AI 1,2
         "00000000-0000-0000-0000-000000000005", // WRITE DO
 };
 
-void parseStringToIntArray(const char* inputString) {
-  // Check if the input string starts with '<' and ends with '>'
-  if (inputString[0] != '<' || inputString[strlen(inputString) - 1] != '>') {
-    // Invalid format
-    return;
-  }
+void parseStringToIntArray(const char *inputString)
+{
+    // Check if the input string starts with '<' and ends with '>'
+    if (inputString[0] != '<' || inputString[strlen(inputString) - 1] != '>')
+    {
+        // Invalid format
+        return;
+    }
 
-  // Remove the '<' and '>'
-  char cleanString[strlen(inputString)];
-  strncpy(cleanString, inputString + 1, strlen(inputString) - 2);
-  cleanString[strlen(inputString) - 2] = '\0';
+    // Remove the '<' and '>'
+    char cleanString[strlen(inputString)];
+    strncpy(cleanString, inputString + 1, strlen(inputString) - 2);
+    cleanString[strlen(inputString) - 2] = '\0';
 
-  // Tokenize the string using ","
-  char* token = strtok(cleanString, ",");
-  int i = 0;
+    // Tokenize the string using ","
+    char *token = strtok(cleanString, ",");
+    int i = 0;
 
-  // Iterate through tokens and convert to integers
-  while (token != NULL && i < 3) {
-    input_vals[i] = atoi(token);
-    i++;
-    token = strtok(NULL, ",");
-  }
+    // Iterate through tokens and convert to integers
+    while (token != NULL && i < 3)
+    {
+        input_vals[i] = atoi(token);
+        i++;
+        token = strtok(NULL, ",");
+    }
 }
 
 int outputIntegers[10];
 float outputFloats[10];
 
-void parseString(String inputString) {
-  // Remove leading/trailing whitespaces
-  String trimmedString = inputString.substring(1, inputString.length() - 1);
+void parseString(String inputString)
+{
+    // Remove leading/trailing whitespaces
+    String trimmedString = inputString.substring(1, inputString.length() - 1);
 
-  // Split the string by commas
-  int commaIndex;
-  int lastIndex = 0;
-  int index = 0;
-  String values[5];
+    // Split the string by commas
+    int commaIndex;
+    int lastIndex = 0;
+    int index = 0;
+    String values[5];
 
-  while ((commaIndex = trimmedString.indexOf(',', lastIndex)) != -1 && index < 5) {
-    values[index++] = trimmedString.substring(lastIndex, commaIndex);
-    lastIndex = commaIndex + 1;
-  }
+    while ((commaIndex = trimmedString.indexOf(',', lastIndex)) != -1 && index < 5)
+    {
+        values[index++] = trimmedString.substring(lastIndex, commaIndex);
+        lastIndex = commaIndex + 1;
+    }
 
-  // Process the last value
-  if (index < 5) {
-    values[index] = trimmedString.substring(lastIndex);
-  }
+    // Process the last value
+    if (index < 5)
+    {
+        values[index] = trimmedString.substring(lastIndex);
+    }
 
     // <1,0.5,1.5,500,0>
-  // Convert and store values
-  start_bit = values[0].toInt();
-  movement_low_end = values[1].toFloat();
-  movement_high_end = values[2].toFloat();
-  ms_target = values[3].toInt();
-  axis_key = values[4].toInt();
+    // Convert and store values
+    start_bit = values[0].toInt();
+    movement_low_end = values[1].toFloat();
+    movement_high_end = values[2].toFloat();
+    ms_target = values[3].toInt();
+    axis_key = values[4].toInt();
 }
-
 
 class CharacteristicCallback : public BLECharacteristicCallbacks
 {
@@ -150,21 +163,23 @@ class CharacteristicCallback : public BLECharacteristicCallbacks
 
         // February 13, 2024:
         String valueStr;
-        for(char c : value){
+        for (char c : value)
+        {
             valueStr += c;
         }
         parseString(valueStr);
 
-        Serial.printf("Start bit: %d\n",start_bit);
-        Serial.printf("Movement Low end: %f\n",movement_low_end);
-        Serial.printf("Movement High End: %f\n",movement_high_end);
-        Serial.printf("ms_target : %d\n",ms_target);
-        Serial.printf("axis_key: %d\n",axis_key);
+        Serial.printf("Start bit: %d\n", start_bit);
+        Serial.printf("Movement Low end: %f\n", movement_low_end);
+        Serial.printf("Movement High End: %f\n", movement_high_end);
+        Serial.printf("ms_target : %d\n", ms_target);
+        Serial.printf("axis_key: %d\n", axis_key);
 
         trigger_in = start_bit;
 
         // Reset loop
         is_triggered = false;
+        movement = false;
         movement_char = 0;
     }
 };
@@ -175,15 +190,20 @@ void setBLE()
     char analog1Str[10] = "";
     char analog2Str[10] = "";
     char analog3Str[10] = "";
+    char analog4Str[10] = "";
+
 
     // Converting to strings
-    dtostrf(static_cast<float>(movement_char),1,2,analog1Str);
-    dtostrf(int(movement),1,2,analog2Str);
-    dtostrf(lipo.getSOC(),1,2,analog3Str);
+    dtostrf(static_cast<float>(movement_char), 1, 2, analog1Str);
+    dtostrf(int(movement), 1, 2, analog2Str);
+    dtostrf(lipo.getSOC(), 1, 2, analog3Str);
+    dtostrf(charging, 1, 2, analog4Str);
 
     // Combining to single string
-    snprintf(notify_char, sizeof(notify_char), "<%s,%s,%s>", analog1Str, analog2Str, analog3Str);   // show flag and battery status
-    // snprintf(notify_char, sizeof(notify_char), "<%s>", analog1Str);                              // Only show flag
+    // snprintf(notify_char, sizeof(notify_char), "<%s,%s,%s>", analog1Str, analog2Str, analog3Str); // show flag and battery status
+
+    // String that includes charging flag:
+    snprintf(notify_char, sizeof(notify_char), "<%s,%s,%s,%s>", analog1Str, analog2Str, analog3Str, analog4Str);
 
     // Notify string
     characteristics[0]->setValue(notify_char);
@@ -303,12 +323,16 @@ void setup()
 
     Wire.begin();
     imusetup();
-    if (lipo.begin() == false){
+    if (lipo.begin() == false)
+    {
         lipo.enableDebugging();
         Serial.println("Unable to read battery.");
-    }else{
+    }
+    else
+    {
         Serial.print("Battery Charge is at: %");
         Serial.println(lipo.getSOC());
+        
     }
 
     pinMode(EN_3V3_SW, OUTPUT);
@@ -326,6 +350,16 @@ void loop()
 {
     unsigned long currentMillis = millis();
 
+    // Update running average
+    avg_x.addValue(abs(gyro.gyro.x));
+    avg_z.addValue(abs(gyro.gyro.z));
+
+    if (lipo.getVoltage() > 4.20){
+        charging = 1;
+    }else{
+        charging = 0;
+    }
+
     // Updated BLE Every 1000 milliseconds
     if (currentMillis - previousMillis >= interval)
     {
@@ -336,36 +370,23 @@ void loop()
 
     if (trigger_in > 0)
     {
-       switchCaseValue = 1;
+        switchCaseValue = 1;
     }
-    else if (trigger_in <= 0){
+    else if (trigger_in <= 0)
+    {
         switchCaseValue = 0;
         is_triggered = false;
         movement_char = 0;
         movement = false;
     }
 
-    if (switchCaseValue > 0)
-    {
-        ISM.getEvent(&accel,&gyro,&temp);
-
-        // Converts radian to degree
-        gyro.gyro.x = (gyro.gyro.x * 57.2957795);// - 0.14;
-        gyro.gyro.y = (gyro.gyro.y * 57.2957795);// - 1.0;
-        gyro.gyro.z = (gyro.gyro.z * 57.2957795);// - 0.14;
-
-        // Serial.print("X: ");
-        // Serial.print(gyro.gyro.x);
-        // Serial.print("  Y: ");
-        // Serial.print(gyro.gyro.y);
-        // Serial.print("  Z: ");
-        // Serial.print(gyro.gyro.z);
-        // Serial.println();
-    }
-
+    ISM.getEvent(&accel, &gyro, &temp);
+    gyro.gyro.x = (gyro.gyro.x * 57.2957795);
+    gyro.gyro.z = (gyro.gyro.z * 57.2957795);
     statusled.blink();
 
-    if (movement == true){
+    if (movement == true)
+    {
         switchCaseValue = 2;
     }
 
@@ -378,54 +399,68 @@ void loop()
     case 1:
         statusled.blink(500, 500, CRGB::Green);
         // check if movement is continuous for specified amount of time
-        if(axis_key == 0)   // measure pitch - x axis
+        if (axis_key == 0) // measure pitch - x axis
         {
-        //    Serial.println(abs(gyro.gyro.x));
-           if((movement_high_end)>(abs(gyro.gyro.x))>(movement_low_end)){
-                if(startTime == 0){
-                    startTime = millis();
-                } else if (millis() - startTime >= ms_target){
-                    Serial.printf("Over %d deg/s for at %d ms!\n\n\n\n\n\n\n",movement_low_end,ms_target);
-                    startTime = 0;
-                    movement = true;
-                }
-                movement_char = 1;
-            }else{
+            gyro_x = avg_x.getAverage() - 0.2;
+            Serial.println(gyro_x);
+            if ((gyro_x > (movement_high_end)))
+            {
                 startTime = 0;
-                if((abs(gyro.gyro.x)>(movement_high_end))){
-                    movement_char = 3;
-                }
-                else if((abs(gyro.gyro.x)<(movement_low_end))){
-                    movement_char = 2;
-                }
-                movement = false;
+                movement_char = 3;
             }
-        }
-        else if (axis_key == 1){ // measure YAW - z axis
-            // Serial.println(abs(gyro.gyro.z));
-            if((movement_high_end)>(abs(gyro.gyro.z))>(movement_low_end)){
-                if(startTime == 0){
-                    startTime = millis();
-                } else if (millis() - startTime >= ms_target){
-                    Serial.printf("Over %d deg/s for at %d ms!\n\n\n\n\n\n\n",movement_low_end,ms_target);
-                    startTime = 0;
-                    movement = true;
-                }
-                movement_char = 1;
-            }else{
+            else if ((gyro_x) < (movement_low_end))
+            {
                 startTime = 0;
-                if(abs(gyro.gyro.z)>(movement_high_end)){
-                    movement_char = 3;
+                movement_char = 2;
+            }
+            else
+            {
+                movement_char = 1;
+                if (startTime == 0)
+                {
+                    startTime = millis();
                 }
-                else if (abs(gyro.gyro.z)<(movement_low_end)){
-                    movement_char = 2;
+                else if (millis() - startTime >= ms_target)
+                {
+                    Serial.printf("Over %d deg/s for at %d ms!\n\n\n\n\n\n\n", movement_low_end, ms_target);
+                    movement = true;
+                    startTime = 0;
                 }
-                movement = false;
+            }
+            // movement = false;
+        }
+        else if (axis_key == 1)
+        {   // measure YAW - z axis
+            gyro_z = avg_z.getAverage() - 0.2;
+            Serial.println(gyro_z);
+            if ((gyro_z > (movement_high_end)))
+            {
+                startTime = 0;
+                movement_char = 3;
+            }
+            else if ((gyro_z) < (movement_low_end))
+            {
+                startTime = 0;
+                movement_char = 2;
+            }
+            else
+            {
+                movement_char = 1;
+                if (startTime == 0)
+                {
+                    startTime = millis();
+                }
+                else if (millis() - startTime >= ms_target)
+                {
+                    Serial.printf("Over %d deg/s for at %d ms!\n\n\n\n\n\n\n", movement_low_end, ms_target);
+                    movement = true;
+                    startTime = 0;
+                }
             }
         }
         break;
     case 2:
-        // Send Positive bit to UTS indicating movement detected 
+        // Send Positive bit to UTS indicating movement detected
         statusled.blink(500, 500, CRGB::Blue);
         actTime = millis();
         // movement_char = 1;
