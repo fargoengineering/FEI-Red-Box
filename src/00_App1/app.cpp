@@ -339,8 +339,8 @@ void loop()
     switchCaseValue = 1;
   }
 
-  if (switchCaseValue > 0)
-  {
+  // if (switchCaseValue > 0)
+  // {
     if (myISM.checkStatus())
     {
       myISM.getAccel(&accelData);
@@ -349,28 +349,30 @@ void loop()
       gyro.gyro.y = gyro.gyro.y - 0.55;
       gyro.gyro.z = gyro.gyro.z - 0.14;
 
-      // Serial.print(F("Actual Accelerometer: "));
-      // Serial.print(F("X: "));
-      // Serial.print(accelData.xData);
-      // Serial.print(F(" "));
-      // Serial.print(F("Y: "));
-      // Serial.print(accelData.yData);
-      // Serial.print(F(" "));
-      // Serial.print(F("Z: "));
-      // Serial.print(accelData.zData);
-      // Serial.println(F(" "));
-      Serial.print(F("Gyroscope: "));
+      Serial.print(F("\nActual Accelerometer:\n "));
+      Serial.print(F("X: "));
+      Serial.print(accelData.xData);
+      Serial.println(F(" "));
+      Serial.print(F("Y: "));
+      Serial.print(accelData.yData);
+      Serial.println(F(" "));
+      Serial.print(F("Z: "));
+      Serial.print(accelData.zData);
+      Serial.println(F(" "));
+      Serial.print(F("\nGyroscope:\n "));
       Serial.print("X: ");
       Serial.print(gyroData.xData);
-      Serial.print(F(" "));
+      Serial.println(F(" "));
       Serial.print(F("Y: "));
       Serial.print(gyroData.yData);
-      Serial.print(F(" "));
+      Serial.println(F(" "));
       Serial.print(F("Z: "));
       Serial.print(gyroData.zData);
       Serial.println(F(" "));
     }
-  }
+  // }
+
+  delay(500);
 
   statusled.blink();
 

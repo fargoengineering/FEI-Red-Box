@@ -415,92 +415,60 @@ void loop()
         break;
     case 1:
         statusled.blink(500, 500, CRGB::Green);
+        float value_to_check;
         // check if movement is continuous for specified amount of time
         if (axis_key == 1){
             // Get accelerometer - X axis
-            accel_x = accel_avg_x.getAverage();
-            Serial.println(accel_x);
-                        
+            value_to_check = accel_avg_x.getAverage();                        
         }
         else if (axis_key == 2){
             // Get accelereometer - Y axis
-            accel_y = accel_avg_y.getAverage();
-            Serial.println(accel_y);
+            value_to_check = accel_avg_y.getAverage();
         }
         else if (axis_key == 3){
             // Get accelerometer - Z axis
-            accel_z = accel_avg_z.getAverage();
-            Serial.println(accel_z);
+            value_to_check = accel_avg_z.getAverage();
         }    
         else if (axis_key == 4) // measure pitch - x axis gyro
         {
-            gyro_x = gyro_avg_x.getAverage() - 0.2;
-            Serial.println(gyro_x);
-            if ((gyro_x > (movement_high_end)))
-            {
-                startTime = 0;
-                movement_char = 3;
-            }
-            else if ((gyro_x) < (movement_low_end))
-            {
-                startTime = 0;
-                movement_char = 2;
-            }
-            else
-            {
-                movement_char = 1;
-                if (startTime == 0)
-                {
-                    startTime = millis();
-                }
-                else if (millis() - startTime >= ms_target)
-                {
-                    Serial.printf("Over %d deg/s for at %d ms!\n\n\n\n\n\n\n", movement_low_end, ms_target);
-                    movement = true;
-                    startTime = 0;
-                }
-            }
+            value_to_check = gyro_avg_x.getAverage() - 0.2;
             // movement = false;
         }
         else if (axis_key == 5){
             // get gyro y axis
-            gyro_y = gyro_avg_y.getAverage() - 0.2;
-            Serial.println(gyro_y);
-            if ((gyro_y > (movement_high_end)))
-            {
-                startTime = 0;
-                movement_char = 3;
-            }
-            else if ((gyro_y) < (movement_low_end))
-            {
-                startTime = 0;
-                movement_char = 2;
-            }
-            else
-            {
-                movement_char = 1;
-                if (startTime == 0)
-                {
-                    startTime = millis();
-                }
-                else if (millis() - startTime >= ms_target)
-                {
-                    Serial.printf("Over %d deg/s for at %d ms!\n\n\n\n\n\n\n", movement_low_end, ms_target);
-                    movement = true;
-                    startTime = 0;
-                }
-            }
+            value_to_check = gyro_avg_y.getAverage() - 0.2;
         }
         else if (axis_key == 6)
         {   // measure YAW - z axis
-            gyro_z = gyro_avg_z.getAverage() - 0.2;
-            Serial.println(gyro_z);
-            if ((gyro_z > (movement_high_end)))
+            value_to_check = gyro_avg_z.getAverage() - 0.2;
+        }
+        
+        float prev_value = 0.0;
+        if(axis_key == 1 || axis_key == 2 || axis_key == 3)
+        {
+            Serial.print("Accelerometer: ");
+            Serial.println(value_to_check);
+            prev_value = value_to_check;
+
+            // if current_val - last_val > threshold(lowend) { turn blue }
+            if(abs(value_to_check) - abs(prev_value) > movement_low_end){
+                // turn blue
+                Serial.printf("Over %d acceleration!\n\n", movement_low_end, ms_target);
+                movement = true;
+                startTime = 0;
+            }
+            prev_value = value_to_check;            
+        }
+        else if(axis_key == 4 || axis_key == 5 || axis_key == 6)
+        {
+            Serial.print("Gyro: ");
+            Serial.println(value_to_check);
+            if ((value_to_check > (movement_high_end)))
             {
                 startTime = 0;
                 movement_char = 3;
             }
-            else if ((gyro_z) < (movement_low_end))
+            else if ((value_to_check) < (movement_low_end))
             {
                 startTime = 0;
                 movement_char = 2;
@@ -539,3 +507,7 @@ void loop()
 // 4 = gyro.X
 // 5 = gyro.Y
 // 6 = gyro.Z
+
+// Accelerometer measurement:
+// Low threshold will be difference in acceleration to detect.
+// If accel has increased by at least the threshold amount, send complete bit.

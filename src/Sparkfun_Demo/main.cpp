@@ -1,143 +1,166 @@
-#include <Wire.h> // Needed for I2C
+#include <Arduino.h>
+#include <Wire.h>
+#include "SparkFun_ISM330DHCX.h"
 
-#include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h> // Click here to get the library: http://librarymanager/All#SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLE2902.h>
-#include <BLEUtils.h>
-
-// Replace with your unique UUIDs
-#define SERVICE_UUID "Service-1"
-#define CHARACTERISTIC_1_UUID "characteristic_1"
-#define CHARACTERISTIC_2_UUID "characteristic_2"
-#define CHARACTERISTIC_3_UUID "characteristic_3"
-
-SFE_MAX1704X lipo; // Defaults to the MAX17043
-
-const char BLE_Name[] = "FEI_IMU_BOX_01";
-
-const int NUM_SERVICES = 1;
-const int NUM_CHAR_PER_SERVICE = 3;
-const int NUM_CHARS = NUM_SERVICES * NUM_CHAR_PER_SERVICE;
-
-BLEServer *pServer;
-BLEService *pServices[NUM_SERVICES];
-BLECharacteristic *characteristics[NUM_CHARS];
-const char *const service_ids[NUM_SERVICES] =
-{
-        "00000000-0000-0000-0000-000000000001",
-};
-
-const char *characteristic_ids[NUM_CHARS] =
-{
-        "00000000-0000-0000-0000-000000000001", // Read AI 1,2
-        "00000000-0000-0000-0000-000000000002",
-        "00000000-0000-0000-0000-000000000003",
-};
-
-double voltage = 0; // Variable to keep track of LiPo voltage
-double soc = 0;     // Variable to keep track of LiPo state-of-charge (SOC)
-bool alert;         // Variable to keep track of whether alert has been triggered
-float change_rate = 0.0;
-bool charging = 0;
-
-double current_voltage = 0;
-double prev_voltage = 0;
+// Structs for X,Y,Z data
+SparkFun_ISM330DHCX myISM; 
+sfe_ism_data_t accelData; 
+sfe_ism_data_t gyroData;
 
 
-void setBLE()
-{
-    // To save values in string
-    char analog1Str[10] = "";
-    char analog2Str[10] = "";
-    char analog3Str[10] = "";
-    char notify_char[100];
-    // Converting to strings
-    dtostrf(voltage, 1, 2, analog1Str);
-    dtostrf(static_cast<float>(soc), 1, 2, analog2Str);
-    dtostrf(charging, 1, 2, analog3Str);
+// Interrupt pin
+byte interrupt_pin = 1;//D1; 
 
-    // Combining to single string
-    snprintf(notify_char, sizeof(notify_char), "<%s,%s,%s>", analog1Str, analog2Str, analog3Str); // show flag and battery status
-    // snprintf(notify_char, sizeof(notify_char), "<%s>", analog1Str);                              // Only show flag
+void i2c_scan(){
+  byte error, address;
+  int nDevices;
 
-    // Notify string
-    characteristics[0]->setValue(notify_char);
-    characteristics[0]->notify();
-}
+  Serial.println("Scanning...");
 
-
-void setup()
-{
-  Serial.begin(115200); // Start serial, to output debug data
-  while (!Serial)
-    ; // Wait for user to open terminal
-  Serial.println(F("MAX17043 Example"));
-
-  BLEDevice::init("DRS_IMU");
-  pServer = BLEDevice::createServer();
-  BLEService *services[NUM_SERVICES];
-
-  services[0] = pServer->createService(service_ids[0]);
-
-  characteristics[0] = services[0]->createCharacteristic(characteristic_ids[0],  BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  characteristics[0]->addDescriptor(new BLE2902());
-  characteristics[1] = services[0]->createCharacteristic(characteristic_ids[1],  BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  characteristics[1]->addDescriptor(new BLE2902());
-  characteristics[2] = services[0]->createCharacteristic(characteristic_ids[2],  BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  characteristics[2]->addDescriptor(new BLE2902());
-
-  services[0]->start();
-  pServer->getAdvertising()->addServiceUUID(services[0]->getUUID());
-  pServer->getAdvertising()->start();
-
-  Wire.begin();
-
-  lipo.enableDebugging(); // Uncomment this line to enable helpful debug messages on Serial
-
-  // Set up the MAX17043 LiPo fuel gauge:
-  if (lipo.begin() == false) // Connect to the MAX17043 using the default wire port
+  nDevices = 0;
+  for(address = 1; address < 127; address++ )
   {
-    Serial.println(F("MAX17043 not detected. Please check wiring. Freezing."));
-    while (1)
-      ;
+    // The i2c_scanner uses the return value of
+    // the Write.endTransmisstion to see if
+    // a device did acknowledge to the address.
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+
+    if (error == 0)
+    {
+      Serial.print("I2C device found at address 0x");
+      if (address<16)
+        Serial.print("0");
+      Serial.print(address,HEX);
+      Serial.println("  !");
+
+      nDevices++;
+    }
+    else if (error==4)
+    {
+      Serial.print("Unknown error at address 0x");
+      if (address<16)
+        Serial.print("0");
+      Serial.println(address,HEX);
+    }
   }
+  if (nDevices == 0)
+    Serial.println("No I2C devices found\n");
+  else
+    Serial.println("done\n");
 
-  // Quick start restarts the MAX17043 in hopes of getting a more accurate
-  // guess for the SOC.
-  lipo.quickStart();
-
-  // We can set an interrupt to alert when the battery SoC gets too low.
-  // We can alert at anywhere between 1% - 32%:
-  lipo.setThreshold(20); // Set alert threshold to 20%.
+  delay(5000);           // wait 5 seconds for next scan
 }
 
-void loop()
+void imusetup()
 {
-  voltage = lipo.getVoltage();
-  current_voltage = voltage;
+    SPI.begin();
 
-  if(current_voltage > 4.20){
-    charging = 1;
-  }else{
-    charging = 0;
-  }
-  prev_voltage = current_voltage;
+    pinMode(5, OUTPUT);
+    digitalWrite(5, HIGH);
 
-  soc = lipo.getSOC();
-  alert = lipo.getAlert();
+    if (!myISM.begin_SPI(5))
+    {
+        Serial.println("ISM330DHCX connection error");
+    }
+}
 
-  // Print the variables:
-  Serial.print("Voltage: ");
-  Serial.print(voltage); // Print the battery voltage
-  Serial.println(" V");
+Adafruit_ISM330DHCX myISM;
 
-  Serial.print("Percentage: ");
-  Serial.print(soc); // Print the battery state of charge
-  Serial.println(" %");
+void setup(){
+	// Set the interrupt to INPUT
+	pinMode(interrupt_pin, INPUT);
+	Serial.begin(115200);
+	Serial.println("Begin");
 
-  
-  setBLE();
+	// Wire.begin();
 
-  delay(500);
+	// // i2c_scan();
+
+	// if( !myISM.begin(0x36) ){
+	// 	Serial.println("Did not begin.");
+	// 	while(1);
+	// }
+
+	// Reset the device to default settings. This is helpful if you're doing multiple
+	// uploads testing different settings. 
+	myISM.deviceReset();
+
+	// Wait for it to finish reseting
+	while( !myISM.getDeviceReset() ){ 
+		delay(1);
+	} 
+
+	Serial.println("Reset.");
+	Serial.println("Applying settings.");
+	delay(100);
+	
+	myISM.setDeviceConfig();
+	myISM.setBlockDataUpdate();
+	
+	// Set the output data rate and precision of the accelerometer
+	myISM.setAccelDataRate(ISM_XL_ODR_104Hz);
+	myISM.setAccelFullScale(ISM_4g); 
+
+	// Turn on the accelerometer's filter and apply settings. 
+	myISM.setAccelFilterLP2();
+	myISM.setAccelSlopeFilter(ISM_LP_ODR_DIV_100);
+
+	// Set the accelerometer's status i.e. the data ready to interrupt one. 
+	// Commented out just below is the function to send the data ready
+	// to interrupt two. 
+
+	myISM.setAccelStatustoInt1();
+	//myISM.setAccelStatustoInt2();
+
+
+	// We can just as easily set the gyroscope's data read signal to either interrupt
+
+	//myISM.setGyroStatustoInt1();
+	//myISM.setGyroStatustoInt2();
+
+
+	// Uncommenting the function call below will change the interrupt to 
+	// active LOW instead of HIGH.
+
+	//myISM.setPinMode();
+
+	// This function call will modify which "events" trigger an interrupt. No 
+	// argument has been given, please refer to the datasheet for more 
+	// information.
+
+	// myISM.setIntNotification(uint8_t val);
+	Serial.println("End setup");
+}
+
+void loop(){
+
+
+	// if( digitalRead(interrupt_pin) == HIGH ){
+	myISM.getAccel(&accelData);
+	Serial.print("Accelerometer: ");
+	Serial.print("X: ");
+	Serial.print(accelData.xData);
+	Serial.print(" ");
+	Serial.print("Y: ");
+	Serial.print(accelData.yData);
+	Serial.print(" ");
+	Serial.print("Z: ");
+	Serial.print(accelData.zData);
+	Serial.println(" ");
+
+	myISM.getGyro(&gyroData);
+	Serial.print("Gyrometer: ");
+	Serial.print("X: ");
+	Serial.print(gyroData.xData);
+	Serial.print(" ");
+	Serial.print("Y: ");
+	Serial.print(gyroData.yData);
+	Serial.print(" ");
+	Serial.print("Z: ");
+	Serial.print(gyroData.zData);
+	Serial.println(" ");
+	// }
+
+	delay(500);
 }
