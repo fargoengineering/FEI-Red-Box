@@ -449,7 +449,6 @@ void loop()
         {
             Serial.print("Accelerometer: ");
             Serial.println(value_to_check);
-            prev_accel_value = value_to_check;
 
             // if current_val - last_val > threshold(lowend) { turn blue }
             if(abs(value_to_check) - abs(prev_accel_value) > movement_low_end){
