@@ -355,6 +355,7 @@ void setup()
     Serial.println(F("Setup Done. Starting LOOP."));
 }
 
+float prev_accel_value = 0.0;
 void loop()
 {
     unsigned long currentMillis = millis();
@@ -443,21 +444,21 @@ void loop()
             value_to_check = gyro_avg_z.getAverage() - 0.2;
         }
         
-        float prev_value = 0.0;
+        
         if(axis_key == 1 || axis_key == 2 || axis_key == 3)
         {
             Serial.print("Accelerometer: ");
             Serial.println(value_to_check);
-            prev_value = value_to_check;
+            prev_accel_value = value_to_check;
 
             // if current_val - last_val > threshold(lowend) { turn blue }
-            if(abs(value_to_check) - abs(prev_value) > movement_low_end){
+            if(abs(value_to_check) - abs(prev_accel_value) > movement_low_end){
                 // turn blue
                 Serial.printf("Over %d acceleration!\n\n", movement_low_end, ms_target);
                 movement = true;
                 startTime = 0;
             }
-            prev_value = value_to_check;            
+            prev_accel_value = value_to_check;            
         }
         else if(axis_key == 4 || axis_key == 5 || axis_key == 6)
         {
